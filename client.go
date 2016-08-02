@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"path/filepath"
 	"sync/atomic"
 	"time"
 
@@ -94,7 +95,7 @@ type Client struct {
 // it already exists. If successful, methods on the returned File can be
 // used for I/O; the associated file descriptor has mode O_RDWR.
 func (c *Client) Create(path string) (*File, error) {
-	return c.open(path, flags(os.O_RDWR|os.O_CREATE|os.O_TRUNC))
+	return c.open(filepath.ToSlash(path), flags(os.O_RDWR|os.O_CREATE|os.O_TRUNC))
 }
 
 const sftpProtocolVersion = 3 // http://tools.ietf.org/html/draft-ietf-secsh-filexfer-02
@@ -189,7 +190,7 @@ func (c *Client) opendir(path string) (string, error) {
 	id := c.nextID()
 	typ, data, err := c.sendPacket(sshFxpOpendirPacket{
 		ID:   id,
-		Path: path,
+		Path: filepath.ToSlash(path),
 	})
 	if err != nil {
 		return "", err
@@ -215,7 +216,7 @@ func (c *Client) Stat(p string) (os.FileInfo, error) {
 	id := c.nextID()
 	typ, data, err := c.sendPacket(sshFxpStatPacket{
 		ID:   id,
-		Path: p,
+		Path: filepath.ToSlash(p),
 	})
 	if err != nil {
 		return nil, err
@@ -241,7 +242,7 @@ func (c *Client) Lstat(p string) (os.FileInfo, error) {
 	id := c.nextID()
 	typ, data, err := c.sendPacket(sshFxpLstatPacket{
 		ID:   id,
-		Path: p,
+		Path: filepath.ToSlash(p),
 	})
 	if err != nil {
 		return nil, err
@@ -266,7 +267,7 @@ func (c *Client) ReadLink(p string) (string, error) {
 	id := c.nextID()
 	typ, data, err := c.sendPacket(sshFxpReadlinkPacket{
 		ID:   id,
-		Path: p,
+		Path: filepath.ToSlash(p),
 	})
 	if err != nil {
 		return "", err
@@ -295,8 +296,8 @@ func (c *Client) Symlink(oldname, newname string) error {
 	id := c.nextID()
 	typ, data, err := c.sendPacket(sshFxpSymlinkPacket{
 		ID:         id,
-		Linkpath:   newname,
-		Targetpath: oldname,
+		Linkpath:   filepath.ToSlash(newname),
+		Targetpath: filepath.ToSlash(oldname),
 	})
 	if err != nil {
 		return err
@@ -314,7 +315,7 @@ func (c *Client) setstat(path string, flags uint32, attrs interface{}) error {
 	id := c.nextID()
 	typ, data, err := c.sendPacket(sshFxpSetstatPacket{
 		ID:    id,
-		Path:  path,
+		Path:  filepath.ToSlash(path),
 		Flags: flags,
 		Attrs: attrs,
 	})
@@ -336,7 +337,7 @@ func (c *Client) Chtimes(path string, atime time.Time, mtime time.Time) error {
 		Mtime uint32
 	}
 	attrs := times{uint32(atime.Unix()), uint32(mtime.Unix())}
-	return c.setstat(path, ssh_FILEXFER_ATTR_ACMODTIME, attrs)
+	return c.setstat(filepath.ToSlash(path), ssh_FILEXFER_ATTR_ACMODTIME, attrs)
 }
 
 // Chown changes the user and group owners of the named file.
@@ -346,12 +347,12 @@ func (c *Client) Chown(path string, uid, gid int) error {
 		GID uint32
 	}
 	attrs := owner{uint32(uid), uint32(gid)}
-	return c.setstat(path, ssh_FILEXFER_ATTR_UIDGID, attrs)
+	return c.setstat(filepath.ToSlash(path), ssh_FILEXFER_ATTR_UIDGID, attrs)
 }
 
 // Chmod changes the permissions of the named file.
 func (c *Client) Chmod(path string, mode os.FileMode) error {
-	return c.setstat(path, ssh_FILEXFER_ATTR_PERMISSIONS, uint32(mode))
+	return c.setstat(filepath.ToSlash(path), ssh_FILEXFER_ATTR_PERMISSIONS, uint32(mode))
 }
 
 // Truncate sets the size of the named file. Although it may be safely assumed
@@ -359,28 +360,28 @@ func (c *Client) Chmod(path string, mode os.FileMode) error {
 // the SFTP protocol does not specify what behavior the server should do when setting
 // size greater than the current size.
 func (c *Client) Truncate(path string, size int64) error {
-	return c.setstat(path, ssh_FILEXFER_ATTR_SIZE, uint64(size))
+	return c.setstat(filepath.ToSlash(path), ssh_FILEXFER_ATTR_SIZE, uint64(size))
 }
 
 // Open opens the named file for reading. If successful, methods on the
 // returned file can be used for reading; the associated file descriptor
 // has mode O_RDONLY.
 func (c *Client) Open(path string) (*File, error) {
-	return c.open(path, flags(os.O_RDONLY))
+	return c.open(filepath.ToSlash(path), flags(os.O_RDONLY))
 }
 
 // OpenFile is the generalized open call; most users will use Open or
 // Create instead. It opens the named file with specified flag (O_RDONLY
 // etc.). If successful, methods on the returned File can be used for I/O.
 func (c *Client) OpenFile(path string, f int) (*File, error) {
-	return c.open(path, flags(f))
+	return c.open(filepath.ToSlash(path), flags(f))
 }
 
 func (c *Client) open(path string, pflags uint32) (*File, error) {
 	id := c.nextID()
 	typ, data, err := c.sendPacket(sshFxpOpenPacket{
 		ID:     id,
-		Path:   path,
+		Path:   filepath.ToSlash(path),
 		Pflags: pflags,
 	})
 	if err != nil {
@@ -393,7 +394,7 @@ func (c *Client) open(path string, pflags uint32) (*File, error) {
 			return nil, &unexpectedIDErr{id, sid}
 		}
 		handle, _ := unmarshalString(data)
-		return &File{c: c, path: path, handle: handle}, nil
+		return &File{c: c, path: filepath.ToSlash(path), handle: handle}, nil
 	case ssh_FXP_STATUS:
 		return nil, normaliseError(unmarshalStatus(id, data))
 	default:
@@ -454,7 +455,7 @@ func (c *Client) StatVFS(path string) (*StatVFS, error) {
 	id := c.nextID()
 	typ, data, err := c.sendPacket(sshFxpStatvfsPacket{
 		ID:   id,
-		Path: path,
+		Path: filepath.ToSlash(path),
 	})
 	if err != nil {
 		return nil, err
@@ -480,7 +481,7 @@ func (c *Client) StatVFS(path string) (*StatVFS, error) {
 	}
 }
 
-// Join joins any number of path elements into a single path, adding a
+// Join joins any number of path elements into a single filepath.ToSlash(path), adding a
 // separating slash if necessary. The result is Cleaned; in particular, all
 // empty strings are ignored.
 func (c *Client) Join(elem ...string) string { return path.Join(elem...) }
@@ -510,7 +511,7 @@ func (c *Client) removeFile(path string) error {
 	id := c.nextID()
 	typ, data, err := c.sendPacket(sshFxpRemovePacket{
 		ID:       id,
-		Filename: path,
+		Filename: filepath.ToSlash(path),
 	})
 	if err != nil {
 		return err
@@ -527,7 +528,7 @@ func (c *Client) removeDirectory(path string) error {
 	id := c.nextID()
 	typ, data, err := c.sendPacket(sshFxpRmdirPacket{
 		ID:   id,
-		Path: path,
+		Path: filepath.ToSlash(path),
 	})
 	if err != nil {
 		return err
@@ -545,8 +546,8 @@ func (c *Client) Rename(oldname, newname string) error {
 	id := c.nextID()
 	typ, data, err := c.sendPacket(sshFxpRenamePacket{
 		ID:      id,
-		Oldpath: oldname,
-		Newpath: newname,
+		Oldpath: filepath.ToSlash(oldname),
+		Newpath: filepath.ToSlash(newname),
 	})
 	if err != nil {
 		return err
@@ -563,7 +564,7 @@ func (c *Client) realpath(path string) (string, error) {
 	id := c.nextID()
 	typ, data, err := c.sendPacket(sshFxpRealpathPacket{
 		ID:   id,
-		Path: path,
+		Path: filepath.ToSlash(path),
 	})
 	if err != nil {
 		return "", err
@@ -600,7 +601,7 @@ func (c *Client) Mkdir(path string) error {
 	id := c.nextID()
 	typ, data, err := c.sendPacket(sshFxpMkdirPacket{
 		ID:   id,
-		Path: path,
+		Path: filepath.ToSlash(path),
 	})
 	if err != nil {
 		return err
@@ -643,7 +644,7 @@ func (f *File) Name() string {
 	return f.path
 }
 
-const maxConcurrentRequests = 64
+const maxConcurrentRequests = 10
 
 // Read reads up to len(b) bytes from the File. It returns the number of
 // bytes read and an error, if any. EOF is signaled by a zero count with
